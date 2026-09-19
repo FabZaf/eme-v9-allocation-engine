@@ -1,44 +1,9 @@
-name: EME V9
+Market regime : ON
 
-on:
-  workflow_dispatch:
-
-jobs:
-  run-v9:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run V9 tests
-        run: |
-          python test_v9.py
-
-      - name: Run V9
-        run: |
-          python main.py
-
-      - name: Run V9 Backtest
-        run: |
-          python V9_BACKTEST.py
-
-      - name: Upload V9 outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: v9-results
-          path: |
-            eme_v9_decisions.csv
-            eme_v9_backtest_results.csv
-            eme_v9_backtest_decisions.csv
+QQQ Score=80.00
+...
+V9 DECISION
+Asset             : QQQ
+Allocation        : 60.0%
+Capital invested  : €6000.00
+Cash              : €4000.00
