@@ -214,7 +214,7 @@ def create_decision(scores, market_on, capital):
     cash_amount = capital - invested_amount
 
     decision = {
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "date": datetime.now().strftime("%Y-%m-%d"),
         "market_on": market_on,
         "asset": selected_asset if selected_asset else "CASH",
         "score": round(score, 2),
