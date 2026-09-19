@@ -34,6 +34,10 @@ jobs:
         run: |
           python V9_BACKTEST.py
 
+      - name: Run V9 Monthly Backtest
+        run: |
+          python V9_BACKTEST_MONTHLY.py
+
       - name: Upload V9 outputs
         uses: actions/upload-artifact@v4
         with:
@@ -42,3 +46,5 @@ jobs:
             eme_v9_decisions.csv
             eme_v9_backtest_results.csv
             eme_v9_backtest_decisions.csv
+            eme_v9_monthly_results.csv
+            eme_v9_monthly_decisions.csv
