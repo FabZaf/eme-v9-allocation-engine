@@ -30,8 +30,15 @@ jobs:
         run: |
           python main.py
 
-      - name: Upload V9 decision
+      - name: Run V9 Backtest
+        run: |
+          python V9_BACKTEST.py
+
+      - name: Upload V9 outputs
         uses: actions/upload-artifact@v4
         with:
-          name: v9-output
-          path: eme_v9_decisions.csv
+          name: v9-results
+          path: |
+            eme_v9_decisions.csv
+            eme_v9_backtest_results.csv
+            eme_v9_backtest_decisions.csv
