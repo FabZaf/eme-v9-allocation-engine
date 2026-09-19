@@ -10,33 +10,81 @@ jobs:
 
     steps:
 
+      # ======================================================
+      # 1. SCARICA IL REPOSITORY
+      # ======================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+
+      # ======================================================
+      # 2. CONFIGURA PYTHON
+      # ======================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+
+      # ======================================================
+      # 3. INSTALLA LE LIBRERIE
+      # ======================================================
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+
+
+      # ======================================================
+      # 4. TEST DELLE REGOLE V9
+      # ======================================================
 
       - name: Run V9 tests
         run: |
           python test_v9.py
 
+
+      # ======================================================
+      # 5. ESEGUI V9 OPERATIVO
+      # ======================================================
+
       - name: Run V9
         run: |
           python main.py
+
+
+      # ======================================================
+      # 6. BACKTEST V9 ORIGINALE
+      # ======================================================
 
       - name: Run V9 Backtest
         run: |
           python V9_BACKTEST.py
 
+
+      # ======================================================
+      # 7. BACKTEST V9 MENSILE
+      # ======================================================
+
       - name: Run V9 Monthly Backtest
         run: |
           python V9_BACKTEST_MONTHLY.py
+
+
+      # ======================================================
+      # 8. STRESS TEST V9
+      # ======================================================
+
+      - name: Run V9 Stress Test
+        run: |
+          python V9_STRESS_TEST.py
+
+
+      # ======================================================
+      # 9. SALVA TUTTI I RISULTATI
+      # ======================================================
 
       - name: Upload V9 outputs
         uses: actions/upload-artifact@v4
@@ -48,3 +96,4 @@ jobs:
             eme_v9_backtest_decisions.csv
             eme_v9_monthly_results.csv
             eme_v9_monthly_decisions.csv
+            eme_v9_stress_test.csv
