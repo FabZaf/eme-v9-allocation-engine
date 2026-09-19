@@ -1,0 +1,37 @@
+name: EME V9
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-v9:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run V9 tests
+        run: |
+          python test_v9.py
+
+      - name: Run V9
+        run: |
+          python main.py
+
+      - name: Upload V9 decision
+        uses: actions/upload-artifact@v4
+        with:
+          name: v9-output
+          path: eme_v9_decisions.csv
