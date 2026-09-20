@@ -123,7 +123,26 @@ jobs:
 
 
       # ======================================================
-      # 13. SALVA TUTTI I RISULTATI
+      # 13. EME ETF CHANGE ALERT
+      # ======================================================
+
+      - name: Run EME ETF Alert
+        run: |
+          python EME_ETF_ALERT.py
+
+
+      # ======================================================
+      # 14. MOSTRA ETF ALERT
+      # ======================================================
+
+      - name: Show EME ETF Alert
+        run: |
+          echo "===== EME ETF ALERT ====="
+          cat eme_etf_alert.csv
+
+
+      # ======================================================
+      # 15. SALVA TUTTI I RISULTATI
       # ======================================================
 
       - name: Upload V9 outputs
@@ -140,3 +159,4 @@ jobs:
             eme_timeframe_results.csv
             eme_timeframe_trades.csv
             eme_robustness_results.csv
+            eme_etf_alert.csv
