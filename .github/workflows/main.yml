@@ -92,7 +92,19 @@ jobs:
 
 
       # ======================================================
-      # 10. SALVA TUTTI I RISULTATI
+      # 10. MOSTRA I RISULTATI NEL LOG
+      # ======================================================
+
+      - name: Show EME Timeframe Results
+        run: |
+          echo "===== TIMEFRAME RESULTS ====="
+          cat eme_timeframe_results.csv
+          echo "===== TIMEFRAME TRADES ====="
+          cat eme_timeframe_trades.csv
+
+
+      # ======================================================
+      # 11. SALVA TUTTI I RISULTATI
       # ======================================================
 
       - name: Upload V9 outputs
