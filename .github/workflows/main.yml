@@ -104,7 +104,26 @@ jobs:
 
 
       # ======================================================
-      # 11. SALVA TUTTI I RISULTATI
+      # 11. TEST ROBUSTEZZA EME
+      # ======================================================
+
+      - name: Run EME Robustness Test
+        run: |
+          python EME_ROBUSTNESS_TEST.py
+
+
+      # ======================================================
+      # 12. MOSTRA RISULTATI ROBUSTEZZA
+      # ======================================================
+
+      - name: Show EME Robustness Results
+        run: |
+          echo "===== EME ROBUSTNESS RESULTS ====="
+          cat eme_robustness_results.csv
+
+
+      # ======================================================
+      # 13. SALVA TUTTI I RISULTATI
       # ======================================================
 
       - name: Upload V9 outputs
@@ -120,3 +139,4 @@ jobs:
             eme_v9_stress_test.csv
             eme_timeframe_results.csv
             eme_timeframe_trades.csv
+            eme_robustness_results.csv
