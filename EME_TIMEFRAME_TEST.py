@@ -4,8 +4,25 @@ import yfinance as yf
 
 
 # ============================================================
-# EME — ASSET × TIMEFRAME TEST
+# EME — TIMEFRAME TEST
 # ============================================================
+# Obiettivo:
+# confrontare la stessa logica EME V7 su:
+#
+#   ASSET:      SPY QQQ IWM DIA GLD
+#   TIMEFRAME:  DAILY / WEEKLY / MONTHLY
+#
+# Nessuna ottimizzazione.
+# Nessuna allocazione.
+# Nessun look-ahead.
+#
+# Entry: Open della barra successiva al segnale.
+# Exit:
+#   - Open della barra successiva quando si verifica
+#     il segnale di uscita
+#   - oppure dopo MAX_HOLD_BARS
+# ============================================================
+
 
 TICKERS = ["SPY", "QQQ", "IWM", "DIA", "GLD"]
 
@@ -17,31 +34,23 @@ TIMEFRAMES = {
     "MONTHLY": "1mo"
 }
 
-INITIAL_CAPITAL = 10000
-
 
 # ============================================================
 # EME V7 PARAMETERS
 # ============================================================
 
 BB_PERIOD = 20
-
 BB_STD = 2
 
 BB_PERCENTILE_WINDOW = 252
-
 BB_PERCENTILE = 0.20
 
 ATR_FAST = 5
-
 ATR_SLOW = 20
-
 ATR_RATIO_THRESHOLD = 0.85
 
 ROC_FAST = 3
-
 ROC_SLOW = 10
-
 ROC_MEDIAN_WINDOW = 126
 
 SMA_EXIT = 5
@@ -50,17 +59,26 @@ MAX_HOLD_BARS = 3
 
 
 # ============================================================
-# DOWNLOAD
+# OUTPUT FILES
 # ============================================================
 
-def download_data(interval):
+RESULTS_FILE = "eme_timeframe_results.csv"
+TRADES_FILE = "eme_timeframe_trades.csv"
+
+
+# ============================================================
+# DOWNLOAD DATA
+# ============================================================
+
+def download_data(ticker, interval):
 
     print(
-        f"\nDownloading data: {interval}"
+        f"Downloading {ticker} "
+        f"{interval} data..."
     )
 
     data = yf.download(
-        TICKERS,
+        ticker,
         start=START_DATE,
         interval=interval,
         auto_adjust=False,
@@ -68,54 +86,60 @@ def download_data(interval):
     )
 
     if data.empty:
+        return None
 
-        raise RuntimeError(
-            f"No data downloaded for {interval}"
-        )
+    # Gestione eventuale MultiIndex restituito da yfinance
+    if isinstance(data.columns, pd.MultiIndex):
+
+        if ticker in data.columns.get_level_values(-1):
+
+            data = data.xs(
+                ticker,
+                axis=1,
+                level=-1
+            )
+
+        else:
+
+            data.columns = data.columns.get_level_values(0)
+
+    required = [
+        "Open",
+        "High",
+        "Low",
+        "Close"
+    ]
+
+    for column in required:
+
+        if column not in data.columns:
+            raise RuntimeError(
+                f"{ticker}: colonna {column} non disponibile."
+            )
+
+    data = data[required].copy()
+
+    data = data.dropna()
 
     return data
 
 
 # ============================================================
-# CLOSE / OHLC
+# TRUE RANGE
 # ============================================================
 
-def get_ohlc(data):
+def calculate_true_range(data):
 
-    if not isinstance(
-        data.columns,
-        pd.MultiIndex
-    ):
+    previous_close = data["Close"].shift(1)
 
-        raise RuntimeError(
-            "Unexpected Yahoo Finance column structure."
-        )
-
-    result = {}
-
-    for field in ["Open", "High", "Low", "Close"]:
-
-        result[field] = data[field].copy()
-
-    return result
-
-
-# ============================================================
-# ATR
-# ============================================================
-
-def calculate_atr(high, low, close, period):
-
-    previous_close = close.shift(1)
-
-    tr1 = high - low
+    tr1 = data["High"] - data["Low"]
 
     tr2 = (
-        high - previous_close
+        data["High"] - previous_close
     ).abs()
 
     tr3 = (
-        low - previous_close
+        data["Low"] - previous_close
     ).abs()
 
     true_range = pd.concat(
@@ -123,48 +147,53 @@ def calculate_atr(high, low, close, period):
         axis=1
     ).max(axis=1)
 
-    return (
-        true_range
-        .rolling(period)
-        .mean()
-    )
+    return true_range
 
 
 # ============================================================
-# EME SIGNAL
+# BUILD EME INDICATORS
 # ============================================================
 
-def calculate_signal(open_price, high, low, close):
+def calculate_indicators(data):
+
+    df = data.copy()
+
+    close = df["Close"]
 
     # --------------------------------------------------------
     # BOLLINGER BANDS
     # --------------------------------------------------------
 
-    sma20 = (
+    bb_middle = (
         close
         .rolling(BB_PERIOD)
         .mean()
     )
 
-    std20 = (
+    bb_std = (
         close
         .rolling(BB_PERIOD)
         .std()
     )
 
-    upper_band = (
-        sma20
-        + BB_STD * std20
+    bb_upper = (
+        bb_middle
+        + BB_STD * bb_std
     )
 
-    lower_band = (
-        sma20
-        - BB_STD * std20
+    bb_lower = (
+        bb_middle
+        - BB_STD * bb_std
     )
 
     bb_width = (
-        upper_band - lower_band
-    ) / sma20
+        (bb_upper - bb_lower)
+        / bb_middle
+    )
+
+    # --------------------------------------------------------
+    # BB WIDTH PERCENTILE
+    # --------------------------------------------------------
 
     bb_threshold = (
         bb_width
@@ -176,133 +205,149 @@ def calculate_signal(open_price, high, low, close):
     # ATR
     # --------------------------------------------------------
 
-    atr5 = calculate_atr(
-        high,
-        low,
-        close,
-        ATR_FAST
+    true_range = calculate_true_range(df)
+
+    atr_fast = (
+        true_range
+        .rolling(ATR_FAST)
+        .mean()
     )
 
-    atr20 = calculate_atr(
-        high,
-        low,
-        close,
-        ATR_SLOW
+    atr_slow = (
+        true_range
+        .rolling(ATR_SLOW)
+        .mean()
     )
 
-    atr_ratio = atr5 / atr20
+    atr_ratio = (
+        atr_fast / atr_slow
+    )
 
     # --------------------------------------------------------
     # ROC
     # --------------------------------------------------------
 
-    roc3 = close.pct_change(
-        ROC_FAST
+    roc_fast = (
+        close
+        .pct_change(ROC_FAST)
     )
 
-    roc10 = close.pct_change(
-        ROC_SLOW
+    roc_slow = (
+        close
+        .pct_change(ROC_SLOW)
     )
 
-    delta_roc3 = (
-        roc3 - roc3.shift(1)
+    delta_roc_fast = (
+        roc_fast.diff()
     )
 
-    roc10_median = (
-        roc10
+    roc_slow_median = (
+        roc_slow
         .rolling(ROC_MEDIAN_WINDOW)
         .median()
     )
 
     # --------------------------------------------------------
-    # PHASE 1 — COMPRESSION
+    # SMA + STANDARD DEVIATION
+    # --------------------------------------------------------
+
+    sma20 = (
+        close
+        .rolling(20)
+        .mean()
+    )
+
+    std20 = (
+        close
+        .rolling(20)
+        .std()
+    )
+
+    sma5 = (
+        close
+        .rolling(SMA_EXIT)
+        .mean()
+    )
+
+    # --------------------------------------------------------
+    # COMPRESSION
+    #
+    # Compression must exist in one of the
+    # previous 3 bars.
     # --------------------------------------------------------
 
     compression_now = (
-
         (bb_width <= bb_threshold)
-
-        & (atr_ratio < ATR_RATIO_THRESHOLD)
+        &
+        (atr_ratio < ATR_RATIO_THRESHOLD)
     )
 
     compression_recent = (
-
         compression_now
         .shift(1)
         .rolling(3)
         .max()
-        .fillna(0)
+        .fillna(False)
         .astype(bool)
     )
 
     # --------------------------------------------------------
-    # PHASE 2 — ACCELERATION
+    # ACCELERATION
     # --------------------------------------------------------
 
     acceleration = (
-
-        (delta_roc3 > 0)
-
-        & (roc10 > roc10_median)
-
-        & (
-            close
-            > sma20 + std20
-        )
+        (delta_roc_fast > 0)
+        &
+        (roc_slow > roc_slow_median)
+        &
+        (close > (sma20 + std20))
     )
 
     # --------------------------------------------------------
-    # FINAL EME SIGNAL
+    # ENTRY SIGNAL
     # --------------------------------------------------------
 
     signal = (
         compression_recent
-        & acceleration
+        &
+        acceleration
     )
 
     # --------------------------------------------------------
-    # EXIT CONDITIONS
+    # EXIT SIGNAL
     # --------------------------------------------------------
 
     exit_signal = (
-
-        (delta_roc3 < 0)
-
-        & (close < close.rolling(SMA_EXIT).mean())
+        (delta_roc_fast < 0)
+        &
+        (close < sma5)
     )
 
-    return signal, exit_signal
+    df["signal"] = signal
+    df["exit_signal"] = exit_signal
+
+    return df
 
 
 # ============================================================
-# RUN ONE ASSET
+# BACKTEST
 # ============================================================
 
-def run_asset(
-    open_price,
-    high,
-    low,
-    close,
-    ticker
-):
-
-    signal, exit_signal = calculate_signal(
-        open_price,
-        high,
-        low,
-        close
-    )
+def run_backtest(df, ticker, timeframe):
 
     trades = []
 
     i = 0
 
-    while i < len(close) - 1:
+    while i < len(df) - 1:
 
-        if not bool(signal.iloc[i]):
+        # ----------------------------------------------------
+        # SIGNAL
+        # ----------------------------------------------------
+
+        if not bool(df["signal"].iloc[i]):
 
             i += 1
-
             continue
 
         # ----------------------------------------------------
@@ -311,49 +356,43 @@ def run_asset(
 
         entry_index = i + 1
 
-        if entry_index >= len(close):
+        if entry_index >= len(df):
 
             break
 
-        entry_price = (
-            open_price.iloc[entry_index]
+        entry_date = df.index[entry_index]
+
+        entry_price = float(
+            df["Open"].iloc[entry_index]
         )
-
-        entry_date = (
-            open_price.index[entry_index]
-        )
-
-        exit_index = None
-
-        exit_reason = None
 
         # ----------------------------------------------------
         # SEARCH EXIT
         # ----------------------------------------------------
 
-        for hold in range(
-            1,
-            MAX_HOLD_BARS + 1
+        exit_index = None
+        exit_reason = None
+
+        last_possible_index = min(
+            entry_index + MAX_HOLD_BARS,
+            len(df) - 1
+        )
+
+        for candidate in range(
+            entry_index + 1,
+            last_possible_index + 1
         ):
 
-            candidate = (
-                entry_index + hold
-            )
-
-            if candidate >= len(close):
-
-                break
+            # Exit condition observed on previous bar,
+            # executed at current bar OPEN.
+            signal_bar = candidate - 1
 
             if bool(
-                exit_signal.iloc[candidate - 1]
+                df["exit_signal"].iloc[signal_bar]
             ):
 
                 exit_index = candidate
-
-                exit_reason = (
-                    "SIGNAL_EXIT"
-                )
-
+                exit_reason = "SIGNAL_EXIT"
                 break
 
         # ----------------------------------------------------
@@ -362,21 +401,26 @@ def run_asset(
 
         if exit_index is None:
 
-            exit_index = min(
-                entry_index + MAX_HOLD_BARS,
-                len(close) - 1
-            )
+            exit_index = last_possible_index
+            exit_reason = "MAX_HOLD"
 
-            exit_reason = (
-                "MAX_HOLD"
-            )
+        # ----------------------------------------------------
+        # SAFETY
+        # ----------------------------------------------------
 
-        exit_price = (
-            open_price.iloc[exit_index]
-        )
+        if exit_index <= entry_index:
 
-        exit_date = (
-            open_price.index[exit_index]
+            i = entry_index
+            continue
+
+        # ----------------------------------------------------
+        # EXIT
+        # ----------------------------------------------------
+
+        exit_date = df.index[exit_index]
+
+        exit_price = float(
+            df["Open"].iloc[exit_index]
         )
 
         # ----------------------------------------------------
@@ -385,35 +429,41 @@ def run_asset(
 
         trade_return = (
             exit_price / entry_price
-        ) - 1
+        ) - 1.0
 
         trades.append({
 
             "ticker": ticker,
+            "timeframe": timeframe,
 
-            "signal_date":
-                close.index[i],
+            "signal_date": df.index[i].strftime(
+                "%Y-%m-%d"
+            ),
 
-            "entry_date":
-                entry_date,
+            "entry_date": entry_date.strftime(
+                "%Y-%m-%d"
+            ),
 
-            "exit_date":
-                exit_date,
+            "exit_date": exit_date.strftime(
+                "%Y-%m-%d"
+            ),
 
-            "entry_price":
-                entry_price,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
 
-            "exit_price":
-                exit_price,
+            "return_pct": trade_return * 100,
 
-            "return":
-                trade_return,
+            "win": (
+                1
+                if trade_return > 0
+                else 0
+            ),
 
-            "hold_bars":
-                exit_index - entry_index,
+            "exit_reason": exit_reason,
 
-            "exit_reason":
-                exit_reason
+            "bars_held": (
+                exit_index - entry_index
+            )
         })
 
         # ----------------------------------------------------
@@ -422,7 +472,7 @@ def run_asset(
 
         i = exit_index + 1
 
-    return pd.DataFrame(trades)
+    return trades
 
 
 # ============================================================
@@ -431,46 +481,62 @@ def run_asset(
 
 def calculate_metrics(trades):
 
-    if trades.empty:
+    if len(trades) == 0:
 
         return {
 
             "signals": 0,
-
-            "win_rate": np.nan,
-
-            "avg_return": np.nan,
-
-            "median_return": np.nan,
-
+            "win_rate_pct": np.nan,
+            "avg_return_pct": np.nan,
+            "median_return_pct": np.nan,
             "profit_factor": np.nan,
-
-            "total_return": 0.0,
-
-            "max_drawdown": np.nan,
-
-            "final_capital":
-                INITIAL_CAPITAL
+            "total_return_pct": np.nan,
+            "max_drawdown_pct": np.nan,
+            "final_capital": np.nan
         }
 
-    returns = trades["return"]
+    returns = np.array(
+        [
+            t["return_pct"] / 100
+            for t in trades
+        ]
+    )
 
-    wins = returns[returns > 0]
-
-    losses = returns[returns < 0]
+    # --------------------------------------------------------
+    # WIN RATE
+    # --------------------------------------------------------
 
     win_rate = (
         (returns > 0).mean()
+        * 100
     )
 
-    avg_return = returns.mean()
+    # --------------------------------------------------------
+    # AVERAGE / MEDIAN
+    # --------------------------------------------------------
 
-    median_return = returns.median()
+    avg_return = (
+        returns.mean()
+        * 100
+    )
 
-    gross_profit = wins.sum()
+    median_return = (
+        np.median(returns)
+        * 100
+    )
+
+    # --------------------------------------------------------
+    # PROFIT FACTOR
+    # --------------------------------------------------------
+
+    gross_profit = returns[
+        returns > 0
+    ].sum()
 
     gross_loss = abs(
-        losses.sum()
+        returns[
+            returns < 0
+        ].sum()
     )
 
     if gross_loss > 0:
@@ -485,172 +551,268 @@ def calculate_metrics(trades):
         profit_factor = np.inf
 
     # --------------------------------------------------------
-    # EQUITY CURVE
+    # COMPOUNDED EQUITY
     # --------------------------------------------------------
 
-    equity = (
-        INITIAL_CAPITAL
-        * (1 + returns).cumprod()
-    )
+    equity = [10000.0]
 
-    running_max = equity.cummax()
+    capital = 10000.0
+
+    for r in returns:
+
+        capital *= (
+            1.0 + r
+        )
+
+        equity.append(capital)
+
+    equity = np.array(equity)
+
+    running_max = np.maximum.accumulate(
+        equity
+    )
 
     drawdown = (
         equity / running_max
-    ) - 1
+    ) - 1.0
 
-    max_drawdown = drawdown.min()
-
-    final_capital = equity.iloc[-1]
+    max_drawdown = (
+        drawdown.min()
+        * 100
+    )
 
     total_return = (
-        final_capital
-        / INITIAL_CAPITAL
-    ) - 1
+        (capital / 10000.0) - 1.0
+    ) * 100
 
     return {
 
-        "signals":
-            len(trades),
+        "signals": len(trades),
 
-        "win_rate":
-            win_rate,
+        "win_rate_pct": win_rate,
 
-        "avg_return":
-            avg_return,
+        "avg_return_pct": avg_return,
 
-        "median_return":
-            median_return,
+        "median_return_pct": median_return,
 
-        "profit_factor":
-            profit_factor,
+        "profit_factor": profit_factor,
 
-        "total_return":
-            total_return,
+        "total_return_pct": total_return,
 
-        "max_drawdown":
-            max_drawdown,
+        "max_drawdown_pct": max_drawdown,
 
-        "final_capital":
-            final_capital
+        "final_capital": capital
     }
 
 
 # ============================================================
-# MAIN
+# MAIN TEST
 # ============================================================
 
 def main():
 
-    print("=" * 90)
-
-    print(
-        "             EME — ASSET × TIMEFRAME TEST"
-    )
-
-    print("=" * 90)
+    print("\n")
+    print("=" * 80)
+    print("             EME — ASSET × TIMEFRAME TEST")
+    print("=" * 80)
 
     all_results = []
-
     all_trades = []
 
     for timeframe_name, interval in TIMEFRAMES.items():
 
         print("\n")
-        print("=" * 90)
-
+        print("-" * 80)
         print(
             f"TIMEFRAME: {timeframe_name}"
         )
-
-        print("=" * 90)
-
-        data = download_data(
-            interval
-        )
-
-        ohlc = get_ohlc(data)
+        print("-" * 80)
 
         for ticker in TICKERS:
 
-            print(
-                f"\nTesting {ticker}..."
-            )
+            try:
 
-            trades = run_asset(
-
-                ohlc["Open"][ticker],
-
-                ohlc["High"][ticker],
-
-                ohlc["Low"][ticker],
-
-                ohlc["Close"][ticker],
-
-                ticker
-            )
-
-            metrics = calculate_metrics(
-                trades
-            )
-
-            result = {
-
-                "timeframe":
-                    timeframe_name,
-
-                "ticker":
+                data = download_data(
                     ticker,
+                    interval
+                )
 
-                **metrics
-            }
+                if data is None:
 
-            all_results.append(
-                result
-            )
+                    print(
+                        f"{ticker}: NO DATA"
+                    )
 
-            if not trades.empty:
+                    continue
 
-                trades = trades.copy()
+                print(
+                    f"{ticker}: "
+                    f"{len(data)} bars"
+                )
 
-                trades["timeframe"] = (
+                # ------------------------------------------------
+                # HISTORY CHECK
+                #
+                # Monthly with 252-bar percentile requires
+                # more historical observations than available
+                # in the requested period.
+                # Do NOT alter the V7 parameter.
+                # ------------------------------------------------
+
+                minimum_required = (
+                    BB_PERCENTILE_WINDOW
+                    + ROC_MEDIAN_WINDOW
+                    + 20
+                )
+
+                if len(data) <= minimum_required:
+
+                    print(
+                        f"{ticker}: "
+                        f"INSUFFICIENT HISTORY "
+                        f"for unchanged EME V7 parameters"
+                    )
+
+                    all_results.append({
+
+                        "timeframe": timeframe_name,
+                        "ticker": ticker,
+                        "status": "INSUFFICIENT_HISTORY",
+                        "signals": 0,
+                        "win_rate_pct": np.nan,
+                        "avg_return_pct": np.nan,
+                        "median_return_pct": np.nan,
+                        "profit_factor": np.nan,
+                        "total_return_pct": np.nan,
+                        "max_drawdown_pct": np.nan,
+                        "final_capital": np.nan
+                    })
+
+                    continue
+
+                # ------------------------------------------------
+                # INDICATORS
+                # ------------------------------------------------
+
+                df = calculate_indicators(
+                    data
+                )
+
+                # ------------------------------------------------
+                # BACKTEST
+                # ------------------------------------------------
+
+                trades = run_backtest(
+                    df,
+                    ticker,
                     timeframe_name
                 )
 
-                all_trades.append(
+                metrics = calculate_metrics(
                     trades
                 )
 
-            print(
+                # ------------------------------------------------
+                # SAVE TRADES
+                # ------------------------------------------------
 
-                f"Signals={metrics['signals']} | "
-
-                f"WinRate="
-                f"{metrics['win_rate'] * 100:.2f}% "
-                if not np.isnan(
-                    metrics["win_rate"]
-                )
-                else "Signals=0 | WinRate=N/A "
-            )
-
-            print(
-
-                f"Avg={metrics['avg_return'] * 100:.3f}% | "
-
-                f"PF={metrics['profit_factor']:.2f} | "
-
-                f"Total="
-                f"{metrics['total_return'] * 100:.2f}% | "
-
-                f"DD="
-                f"{metrics['max_drawdown'] * 100:.2f}%"
-
-                if not np.isnan(
-                    metrics["avg_return"]
+                all_trades.extend(
+                    trades
                 )
 
-                else "No trades"
-            )
+                # ------------------------------------------------
+                # SAVE RESULTS
+                # ------------------------------------------------
+
+                result = {
+
+                    "timeframe": timeframe_name,
+                    "ticker": ticker,
+                    "status": (
+                        "OK"
+                        if metrics["signals"] > 0
+                        else "NO_SIGNALS"
+                    ),
+
+                    **metrics
+                }
+
+                all_results.append(
+                    result
+                )
+
+                # ------------------------------------------------
+                # PRINT RESULT
+                # ------------------------------------------------
+
+                print(
+                    f"  Signals       : "
+                    f"{metrics['signals']}"
+                )
+
+                if metrics["signals"] > 0:
+
+                    print(
+                        f"  Win rate      : "
+                        f"{metrics['win_rate_pct']:.2f}%"
+                    )
+
+                    print(
+                        f"  Avg return    : "
+                        f"{metrics['avg_return_pct']:.4f}%"
+                    )
+
+                    print(
+                        f"  Median return : "
+                        f"{metrics['median_return_pct']:.4f}%"
+                    )
+
+                    print(
+                        f"  Profit factor : "
+                        f"{metrics['profit_factor']:.3f}"
+                    )
+
+                    print(
+                        f"  Total return  : "
+                        f"{metrics['total_return_pct']:.2f}%"
+                    )
+
+                    print(
+                        f"  Max drawdown  : "
+                        f"{metrics['max_drawdown_pct']:.2f}%"
+                    )
+
+                    print(
+                        f"  Final capital : "
+                        f"€{metrics['final_capital']:.2f}"
+                    )
+
+                else:
+
+                    print(
+                        "  NO SIGNALS"
+                    )
+
+            except Exception as e:
+
+                print(
+                    f"{ticker}: ERROR — {e}"
+                )
+
+                all_results.append({
+
+                    "timeframe": timeframe_name,
+                    "ticker": ticker,
+                    "status": "ERROR",
+                    "signals": 0,
+                    "win_rate_pct": np.nan,
+                    "avg_return_pct": np.nan,
+                    "median_return_pct": np.nan,
+                    "profit_factor": np.nan,
+                    "total_return_pct": np.nan,
+                    "max_drawdown_pct": np.nan,
+                    "final_capital": np.nan
+                })
 
     # ========================================================
     # SAVE RESULTS
@@ -660,92 +822,66 @@ def main():
         all_results
     )
 
-    results_df.to_csv(
-        "eme_timeframe_results.csv",
-        index=False
+    trades_df = pd.DataFrame(
+        all_trades
     )
 
-    if all_trades:
-
-        trades_df = pd.concat(
-            all_trades,
-            ignore_index=True
-        )
-
-    else:
-
-        trades_df = pd.DataFrame()
+    results_df.to_csv(
+        RESULTS_FILE,
+        index=False
+    )
 
     trades_df.to_csv(
-        "eme_timeframe_trades.csv",
+        TRADES_FILE,
         index=False
     )
 
     # ========================================================
-    # SUMMARY
+    # FINAL TABLE
     # ========================================================
 
     print("\n")
-    print("=" * 90)
+    print("=" * 100)
+    print("                    FINAL COMPARISON")
+    print("=" * 100)
 
-    print(
-        "                    FINAL MATRIX"
-    )
+    if not results_df.empty:
 
-    print("=" * 90)
+        display_columns = [
 
-    for timeframe in TIMEFRAMES:
-
-        print(
-            f"\n--- {timeframe} ---"
-        )
-
-        subset = results_df[
-            results_df["timeframe"]
-            == timeframe
+            "timeframe",
+            "ticker",
+            "status",
+            "signals",
+            "win_rate_pct",
+            "avg_return_pct",
+            "median_return_pct",
+            "profit_factor",
+            "total_return_pct",
+            "max_drawdown_pct"
         ]
 
-        for _, row in subset.iterrows():
-
-            if row["signals"] == 0:
-
-                print(
-                    f"{row['ticker']:5s} "
-                    f"NO SIGNALS"
-                )
-
-                continue
-
-            print(
-
-                f"{row['ticker']:5s} "
-
-                f"Signals={int(row['signals']):4d} "
-
-                f"Win={row['win_rate'] * 100:6.2f}% "
-
-                f"Avg={row['avg_return'] * 100:7.3f}% "
-
-                f"PF={row['profit_factor']:5.2f} "
-
-                f"Total={row['total_return'] * 100:8.2f}% "
-
-                f"DD={row['max_drawdown'] * 100:7.2f}%"
+        print(
+            results_df[
+                display_columns
+            ].to_string(
+                index=False,
+                float_format=lambda x:
+                f"{x:.3f}"
             )
+        )
 
     print("\n")
-    print(
-        "Results saved:"
-    )
+    print("=" * 100)
+    print("Files created:")
+    print(f"  {RESULTS_FILE}")
+    print(f"  {TRADES_FILE}")
+    print("=" * 100)
 
-    print(
-        "eme_timeframe_results.csv"
-    )
 
-    print(
-        "eme_timeframe_trades.csv"
-    )
-
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
 
